@@ -1,0 +1,40 @@
+# GPTQ量化配置文件示例
+quantization:
+  method: "gptq"
+  bits: 4
+  group_size: 128
+  layer_wise: false
+  outlier_suppression: null
+  
+  # GPTQ特定参数
+  gptq:
+    damp_percent: 0.01
+    desc_act: false
+    static_groups: false
+    sym: true
+    true_sequential: true
+
+model:
+  trust_remote_code: true
+  device_map: "auto"
+  torch_dtype: "float16"
+  load_in_8bit: false
+  load_in_4bit: false
+
+calibration:
+  dataset: null  # 校准数据集路径
+  num_samples: 100
+  batch_size: 1
+  max_length: 2048
+
+output:
+  save_format: "safetensors"
+  save_quantization_config: true
+  save_tokenizer: true
+  save_config: true
+
+# 高级选项
+advanced:
+  use_cache: true
+  gradient_checkpointing: false
+  torch_compile: false 

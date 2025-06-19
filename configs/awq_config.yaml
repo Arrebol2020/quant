@@ -1,0 +1,39 @@
+# AWQ量化配置文件示例
+quantization:
+  method: "awq"
+  bits: 4
+  group_size: 128
+  layer_wise: false
+  outlier_suppression: null
+  
+  # AWQ特定参数
+  awq:
+    zero_point: true
+    q_type: "asym"
+    w_bit: 4
+    a_bit: 8
+
+model:
+  trust_remote_code: true
+  device_map: "auto"
+  torch_dtype: "float16"
+  load_in_8bit: false
+  load_in_4bit: false
+
+calibration:
+  dataset: null  # 校准数据集路径
+  num_samples: 100
+  batch_size: 1
+  max_length: 2048
+
+output:
+  save_format: "safetensors"
+  save_quantization_config: true
+  save_tokenizer: true
+  save_config: true
+
+# 高级选项
+advanced:
+  use_cache: true
+  gradient_checkpointing: false
+  torch_compile: false 

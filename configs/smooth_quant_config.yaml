@@ -1,0 +1,38 @@
+# SmoothQuant配置文件示例
+quantization:
+  method: "gptq"  # 可以与任何量化方法结合
+  bits: 4
+  group_size: 128
+  layer_wise: false
+  outlier_suppression: "smooth_quant"
+  
+  # SmoothQuant特定参数
+  smooth_quant:
+    alpha: 0.5  # 平滑因子
+    folding: true  # 是否进行权重折叠
+    auto_alpha: true  # 自动调整alpha值
+
+model:
+  trust_remote_code: true
+  device_map: "auto"
+  torch_dtype: "float16"
+  load_in_8bit: false
+  load_in_4bit: false
+
+calibration:
+  dataset: null  # 校准数据集路径（SmoothQuant需要）
+  num_samples: 100
+  batch_size: 1
+  max_length: 2048
+
+output:
+  save_format: "safetensors"
+  save_quantization_config: true
+  save_tokenizer: true
+  save_config: true
+
+# 高级选项
+advanced:
+  use_cache: true
+  gradient_checkpointing: false
+  torch_compile: false 

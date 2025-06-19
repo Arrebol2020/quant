@@ -1,0 +1,38 @@
+# MinMax量化配置文件示例
+quantization:
+  method: "minmax"
+  bits: 8
+  group_size: 0  # 0表示不使用分组
+  layer_wise: false
+  outlier_suppression: null
+  
+  # MinMax特定参数
+  minmax:
+    symmetric: false      # 是否使用对称量化
+    per_channel: false    # 是否使用逐通道量化
+    dynamic_range: "minmax"  # 动态范围计算方式: minmax, percentile, etc.
+
+model:
+  trust_remote_code: true
+  device_map: "auto"
+  torch_dtype: "float16"
+  load_in_8bit: false
+  load_in_4bit: false
+
+calibration:
+  dataset: null  # 校准数据集路径（MinMax通常不需要）
+  num_samples: 0
+  batch_size: 1
+  max_length: 2048
+
+output:
+  save_format: "safetensors"
+  save_quantization_config: true
+  save_tokenizer: true
+  save_config: true
+
+# 高级选项
+advanced:
+  use_cache: true
+  gradient_checkpointing: false
+  torch_compile: false 
