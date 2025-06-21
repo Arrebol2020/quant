@@ -12,7 +12,7 @@ from typing import Optional, List
 
 from src.core.quantization_manager import QuantizationManager
 from src.utils.config import load_config
-from src.utils.logging import setup_logging
+from src.app import init_app
 
 @click.command()
 @click.option('--model-path', required=True, help='原始模型路径')
@@ -41,9 +41,9 @@ def main(
 ):
     """大模型量化工具"""
     
-    # 设置日志
+    # 初始化应用
     log_level = logging.DEBUG if verbose else logging.INFO
-    setup_logging(log_level)
+    app = init_app(log_level)
     logger = logging.getLogger(__name__)
     
     logger.info("开始大模型量化...")
