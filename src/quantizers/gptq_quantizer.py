@@ -4,6 +4,7 @@ GPTQ量化器实现 - vLLM兼容版本
 
 import logging
 import torch
+import torch.nn as nn
 import numpy as np
 from typing import Dict, Any, Optional, List
 from tqdm import tqdm
@@ -98,18 +99,21 @@ class GPTQQuantizer(BaseQuantizer):
         """逐层量化"""
         logger.info("执行逐层GPTQ量化...")
         
-        # 获取所有层
+        # 获取所有Linear层
         layers = []
         for name, module in model.named_modules():
-            if hasattr(module, 'weight') and module.weight is not None:
+            if isinstance(module, nn.Linear):
                 layers.append((name, module))
+        
+        logger.info(f"找到 {len(layers)} 个Linear层")
         
         # 过滤目标层
         if target_layers is not None:
             layers = [layers[i] for i in target_layers if i < len(layers)]
+            logger.info(f"将量化其中的 {len(layers)} 个目标层")
         
         # 逐层量化
-        for name, layer in tqdm(layers, desc="量化层"):
+        for name, layer in tqdm(layers, desc="量化Linear层"):
             logger.info(f"量化层: {name}")
             self._quantize_layer(layer, bits, group_size)
         
@@ -194,30 +198,29 @@ class GPTQQuantizer(BaseQuantizer):
         
         # 为所有量化层添加vLLM兼容属性
         for name, module in model.named_modules():
-            if hasattr(module, 'weight') and module.weight is not None:
+            if isinstance(module, nn.Linear):
                 # 确保量化参数存在
                 if not hasattr(module, 'qweight'):
                     module.qweight = module.weight.data
                 if not hasattr(module, 'scales'):
-                    module.scales = getattr(module, 'scale', torch.tensor(1.0))
+                    module.scales = getattr(module, 'scale', None)
                 if not hasattr(module, 'zeros'):
-                    module.zeros = getattr(module, 'zero_point', torch.tensor(0.0))
-                
-                # 添加vLLM需要的其他属性
-                module.bits = getattr(module, 'bits', bits)
-                module.group_size = group_size
-                module.quantization_method = "gptq"
+                    module.zeros = getattr(module, 'zero_point', None)
     
     def _simple_gptq_quantize(self, model, bits: int, group_size: int):
         """简化的GPTQ量化实现"""
-        logger.info("使用简化GPTQ实现...")
+        logger.info("使用简化的GPTQ量化实现...")
         
-        # 遍历所有层进行量化
+        linear_count = 0
         for name, module in model.named_modules():
-            if hasattr(module, 'weight') and module.weight is not None:
+            if isinstance(module, nn.Linear):
+                logger.debug(f"量化Linear层: {name}")
                 self._quantize_layer(module, bits, group_size)
+                linear_count += 1
         
-        # 添加vLLM兼容性
+        logger.info(f"共量化了 {linear_count} 个Linear层")
+        
+        # 为vLLM兼容性添加必要的属性
         self._add_vllm_compatibility(model, bits, group_size)
         
         return model

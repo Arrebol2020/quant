@@ -43,7 +43,7 @@ def main(
     
     # 初始化应用
     log_level = logging.DEBUG if verbose else logging.INFO
-    app = init_app(log_level)
+    init_app(log_level)
     logger = logging.getLogger(__name__)
     
     logger.info("开始大模型量化...")

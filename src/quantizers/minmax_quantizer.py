@@ -4,6 +4,7 @@ MinMax量化器实现 - 基础的线性量化方法，vLLM兼容版本
 
 import logging
 import torch
+import torch.nn as nn
 import numpy as np
 from typing import Dict, Any, Optional, List
 from tqdm import tqdm
@@ -58,12 +59,16 @@ class MinMaxQuantizer(BaseQuantizer):
         per_channel = minmax_config.get('per_channel', False)
         
         # 遍历所有层进行量化
+        linear_count = 0
         for name, module in model.named_modules():
-            if hasattr(module, 'weight') and module.weight is not None:
-                logger.debug(f"量化层: {name}")
+            if isinstance(module, nn.Linear):
+                logger.debug(f"量化Linear层: {name}")
                 self._quantize_layer_minmax(
                     module, bits, group_size, symmetric, per_channel
                 )
+                linear_count += 1
+        
+        logger.info(f"共量化了 {linear_count} 个Linear层")
         
         # 为vLLM兼容性添加必要的属性
         self._add_vllm_compatibility(model, bits, group_size, symmetric, per_channel)
@@ -89,18 +94,21 @@ class MinMaxQuantizer(BaseQuantizer):
         symmetric = minmax_config.get('symmetric', False)
         per_channel = minmax_config.get('per_channel', False)
         
-        # 获取所有层
+        # 获取所有Linear层
         layers = []
         for name, module in model.named_modules():
-            if hasattr(module, 'weight') and module.weight is not None:
+            if isinstance(module, nn.Linear):
                 layers.append((name, module))
+        
+        logger.info(f"找到 {len(layers)} 个Linear层")
         
         # 过滤目标层
         if target_layers is not None:
             layers = [layers[i] for i in target_layers if i < len(layers)]
+            logger.info(f"将量化其中的 {len(layers)} 个目标层")
         
         # 逐层量化
-        for name, layer in tqdm(layers, desc="量化层"):
+        for name, layer in tqdm(layers, desc="量化Linear层"):
             logger.info(f"量化层: {name}")
             self._quantize_layer_minmax(
                 layer, bits, group_size, symmetric, per_channel
@@ -155,29 +163,39 @@ class MinMaxQuantizer(BaseQuantizer):
     
     def _compute_global_params(self, weight: torch.Tensor, bits: int, symmetric: bool = False) -> tuple:
         """计算全局量化参数"""
+        eps = 1e-6
+        
         if symmetric:
             # 对称量化
-            w_max = weight.abs().max()
-            w_min = -w_max
+            w_max = weight.abs().max().item()
+            if w_max < eps:  # 处理全0情况
+                return 1.0, 0
             
-            qmin = -(2 ** (bits - 1))
-            qmax = 2 ** (bits - 1) - 1
+            scale = w_max / (2 ** (bits - 1) - 1)
+            zero_point = 0
+            
         else:
             # 非对称量化
-            w_min = weight.min()
-            w_max = weight.max()
+            w_min = weight.min().item()
+            w_max = weight.max().item()
+            
+            # 处理常数情况
+            if abs(w_max - w_min) < eps:
+                return 1.0, 0
             
             qmin = 0
             qmax = 2 ** bits - 1
-        
-        # 计算缩放因子和零点
-        scale = (w_max - w_min) / (qmax - qmin)
-        zero_point = qmin - w_min / scale if scale > 0 else 0
-        
+            
+            scale = (w_max - w_min) / (qmax - qmin)
+            zero_point = round(qmin - w_min / scale)
+            zero_point = max(qmin, min(qmax, zero_point))  # 裁剪到合法范围
+            
         return scale, zero_point
     
     def _compute_per_channel_params(self, weight: torch.Tensor, bits: int, symmetric: bool = False) -> tuple:
         """计算逐通道量化参数"""
+        eps = 1e-6
+        
         if len(weight.shape) < 2:
             return self._compute_global_params(weight, bits, symmetric)
         
@@ -191,34 +209,46 @@ class MinMaxQuantizer(BaseQuantizer):
             
             if symmetric:
                 # 对称量化
-                w_max = channel_weight.abs().max()
-                w_min = -w_max
+                w_max = channel_weight.abs().max().item()
+                if w_max < eps:  # 处理全0通道
+                    scales.append(1.0)
+                    zero_points.append(0)
+                    continue
+                    
+                scale = w_max / (2 ** (bits - 1) - 1)
+                zero_point = 0
                 
-                qmin = -(2 ** (bits - 1))
-                qmax = 2 ** (bits - 1) - 1
             else:
                 # 非对称量化
-                w_min = channel_weight.min()
-                w_max = channel_weight.max()
+                w_min = channel_weight.min().item()
+                w_max = channel_weight.max().item()
                 
+                # 处理常数通道
+                if abs(w_max - w_min) < eps:
+                    scales.append(1.0)
+                    zero_points.append(0)
+                    continue
+                    
                 qmin = 0
                 qmax = 2 ** bits - 1
-            
-            # 计算缩放因子和零点
-            scale = (w_max - w_min) / (qmax - qmin)
-            zero_point = qmin - w_min / scale if scale > 0 else 0
+                
+                scale = (w_max - w_min) / (qmax - qmin)
+                zero_point = round(qmin - w_min / scale)
+                zero_point = max(qmin, min(qmax, zero_point))  # 裁剪到合法范围
             
             scales.append(scale)
             zero_points.append(zero_point)
         
         # 转换为张量
-        scale_tensor = torch.tensor(scales, device=weight.device, dtype=weight.dtype)
-        zero_point_tensor = torch.tensor(zero_points, device=weight.device, dtype=weight.dtype)
+        scale_tensor = torch.tensor(scales, device=weight.device, dtype=torch.float32)  # 使用float32保存scale
+        zero_point_tensor = torch.tensor(zero_points, device=weight.device, dtype=torch.int32)  # 使用int32保存zero_point
         
         return scale_tensor, zero_point_tensor
     
     def _compute_group_params(self, weight: torch.Tensor, bits: int, group_size: int, symmetric: bool = False) -> tuple:
         """按组计算量化参数"""
+        eps = 1e-6
+        
         # 重塑权重为组
         original_shape = weight.shape
         weight_flat = weight.view(-1)
@@ -236,29 +266,39 @@ class MinMaxQuantizer(BaseQuantizer):
             
             if symmetric:
                 # 对称量化
-                w_max = group_weights.abs().max()
-                w_min = -w_max
+                w_max = group_weights.abs().max().item()
+                if w_max < eps:  # 处理全0组
+                    scales.append(1.0)
+                    zero_points.append(0)
+                    continue
+                    
+                scale = w_max / (2 ** (bits - 1) - 1)
+                zero_point = 0
                 
-                qmin = -(2 ** (bits - 1))
-                qmax = 2 ** (bits - 1) - 1
             else:
                 # 非对称量化
-                w_min = group_weights.min()
-                w_max = group_weights.max()
+                w_min = group_weights.min().item()
+                w_max = group_weights.max().item()
                 
+                # 处理常数组
+                if abs(w_max - w_min) < eps:
+                    scales.append(1.0)
+                    zero_points.append(0)
+                    continue
+                    
                 qmin = 0
                 qmax = 2 ** bits - 1
-            
-            # 计算缩放因子和零点
-            scale = (w_max - w_min) / (qmax - qmin)
-            zero_point = qmin - w_min / scale if scale > 0 else 0
+                
+                scale = (w_max - w_min) / (qmax - qmin)
+                zero_point = round(qmin - w_min / scale)
+                zero_point = max(qmin, min(qmax, zero_point))  # 裁剪到合法范围
             
             scales.append(scale)
             zero_points.append(zero_point)
         
         # 转换为张量
-        scale_tensor = torch.tensor(scales, device=weight.device, dtype=weight.dtype)
-        zero_point_tensor = torch.tensor(zero_points, device=weight.device, dtype=weight.dtype)
+        scale_tensor = torch.tensor(scales, device=weight.device, dtype=torch.float32)  # 使用float32保存scale
+        zero_point_tensor = torch.tensor(zero_points, device=weight.device, dtype=torch.int32)  # 使用int32保存zero_point
         
         return scale_tensor, zero_point_tensor
     

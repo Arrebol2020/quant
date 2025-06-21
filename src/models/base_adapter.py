@@ -39,7 +39,7 @@ class BaseHuggingFaceAdapter(BaseModelAdapter):
             self.model = AutoModelForCausalLM.from_pretrained(
                 model_path,
                 config=self.config,
-                torch_dtype=torch.float16,
+                torch_dtype=self.config.torch_dtype,
                 device_map="auto",
                 trust_remote_code=True
             )
